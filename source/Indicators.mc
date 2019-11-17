@@ -7,6 +7,7 @@ class Indicators extends Ui.Drawable {
 
 	private var mSpacing;
 	private var mIsHorizontal = false;
+	private var mBatteryWidth;
 
 	private var mIndicator1Type;
 	private var mIndicator2Type;
@@ -28,7 +29,8 @@ class Indicators extends Ui.Drawable {
 			mIsHorizontal = true;
 		} else {
 			mSpacing = params[:spacingY];
-		}		
+		}
+		mBatteryWidth = params[:batteryWidth];
 
 		onSettingsChanged();
 	}
@@ -40,7 +42,10 @@ class Indicators extends Ui.Drawable {
 	}
 
 	function draw(dc) {
+
+		// #123 Protect against null or unexpected type e.g. String.
 		var indicatorCount = App.getApp().getProperty("IndicatorCount");
+		indicatorCount = (indicatorCount == null) ? 0 : indicatorCount.toNumber();
 
 		// Horizontal layout for rectangle-148x205.
 		if (mIsHorizontal) {
@@ -84,11 +89,7 @@ class Indicators extends Ui.Drawable {
 
 		// Battery indicator.
 		if (indicatorType == 4 /* INDICATOR_TYPE_BATTERY */) {
-			if (Sys.getDeviceSettings().screenShape == Sys.SCREEN_SHAPE_ROUND) {
-				drawBatteryMeter(dc, x, y, 24, 12);
-			} else {
-				drawBatteryMeter(dc, x, y, 20, 10);
-			}
+			drawBatteryMeter(dc, x, y, mBatteryWidth, mBatteryWidth / 2);
 			return;
 		}
 
@@ -109,13 +110,7 @@ class Indicators extends Ui.Drawable {
 			/* INDICATOR_TYPE_NOTIFICATIONS */ settings.notificationCount > 0
 		][indicatorType];
 
-		var colour;
-		if (value) {
-			colour = gThemeColour;
-		} else {
-			colour = gMeterBackgroundColour;
-		}
-		dc.setColor(colour, Graphics.COLOR_TRANSPARENT);
+		dc.setColor(value ? gThemeColour : gMeterBackgroundColour, Graphics.COLOR_TRANSPARENT);
 
 		// Icon.
 		dc.drawText(

@@ -42,10 +42,10 @@ class DataFields extends Ui.Drawable {
 	private var mWeatherIconsSubset = null; // null, "d" for day subset, "n" for night subset.
 
 	private var mFieldCount;
-	private var mFieldTypes = new [3]; // Cache values to optimise partial update path.
 	private var mHasLiveHR = false; // Is a live HR field currently being shown?
 	private var mWasHRAvailable = false; // HR availability at last full draw (in high power mode).
 	private var mMaxFieldLength; // Maximum number of characters per field.
+	private var mBatteryWidth; // Width of battery meter.
 
 	// private const CM_PER_KM = 100000;
 	// private const MI_PER_KM = 0.621371;
@@ -59,13 +59,18 @@ class DataFields extends Ui.Drawable {
 		mTop = params[:top];
 		mBottom = params[:bottom];
 
+		mBatteryWidth = params[:batteryWidth];
+
 		// Initialise mFieldCount and mMaxFieldLength.
 		onSettingsChanged();
 	}
 
 	// Cache FieldCount setting, and determine appropriate maximum field length.
 	function onSettingsChanged() {
+
+		// #123 Protect against null or unexpected type e.g. String.
 		mFieldCount = App.getApp().getProperty("FieldCount");
+		mFieldCount = (mFieldCount == null) ? 0 : mFieldCount.toNumber();
 
 		/* switch (mFieldCount) {
 			case 3:
@@ -78,24 +83,16 @@ class DataFields extends Ui.Drawable {
 				mMaxFieldLength = 8;
 				break;
 		} */
-		mMaxFieldLength = [8, 6, 4][mFieldCount - 1];
 
-		mFieldTypes[0] = App.getApp().getProperty("Field1Type");
-		mFieldTypes[1] = App.getApp().getProperty("Field2Type");
-		mFieldTypes[2] = App.getApp().getProperty("Field3Type");
+		// #116 Handle FieldCount = 0 correctly.
+		mMaxFieldLength = [0, 8, 6, 4][mFieldCount];
 
-		mHasLiveHR = hasField(FIELD_TYPE_HR_LIVE_5S);
+		mHasLiveHR = App.getApp().hasField(FIELD_TYPE_HR_LIVE_5S);
 
-		if (!hasField(FIELD_TYPE_WEATHER)) {
+		if (!App.getApp().hasField(FIELD_TYPE_WEATHER)) {
 			mWeatherIconsFont = null;
 			mWeatherIconsSubset = null;
 		}
-	}
-
-	function hasField(fieldType) {
-		return ((mFieldTypes[0] == fieldType) ||
-			(mFieldTypes[1] == fieldType) ||
-			(mFieldTypes[2] == fieldType));
 	}
 
 	function draw(dc) {
@@ -107,21 +104,25 @@ class DataFields extends Ui.Drawable {
 			return;
 		}
 
+		var fieldTypes = App.getApp().mFieldTypes;
+
 		switch (mFieldCount) {
 			case 3:
-				drawDataField(dc, isPartialUpdate, mFieldTypes[0], mLeft);
-				drawDataField(dc, isPartialUpdate, mFieldTypes[1], (mRight + mLeft) / 2);
-				drawDataField(dc, isPartialUpdate, mFieldTypes[2], mRight);
+				drawDataField(dc, isPartialUpdate, fieldTypes[0], mLeft);
+				drawDataField(dc, isPartialUpdate, fieldTypes[1], (mRight + mLeft) / 2);
+				drawDataField(dc, isPartialUpdate, fieldTypes[2], mRight);
 				break;
 			case 2:
-				drawDataField(dc, isPartialUpdate, mFieldTypes[0], mLeft + ((mRight - mLeft) * 0.15));
-				drawDataField(dc, isPartialUpdate, mFieldTypes[1], mLeft + ((mRight - mLeft) * 0.85));
+				drawDataField(dc, isPartialUpdate, fieldTypes[0], mLeft + ((mRight - mLeft) * 0.15));
+				drawDataField(dc, isPartialUpdate, fieldTypes[1], mLeft + ((mRight - mLeft) * 0.85));
 				break;
 			case 1:
-				drawDataField(dc, isPartialUpdate, mFieldTypes[0], (mRight + mLeft) / 2);
+				drawDataField(dc, isPartialUpdate, fieldTypes[0], (mRight + mLeft) / 2);
 				break;
+			/*
 			case 0:
 				break;
+			*/
 		}
 	}
 
@@ -196,21 +197,11 @@ class DataFields extends Ui.Drawable {
 
 		// Grey out icon if no value was retrieved.
 		// #37 Do not grey out battery icon (getValueForFieldType() returns empty string).
-		var colour;
-		if (value.length() == 0) {
-			colour = gMeterBackgroundColour;
-		} else {
-			colour = gThemeColour;
-		}
+		var colour = (value.length() == 0) ? gMeterBackgroundColour : gThemeColour;
 
 		// Battery.
 		if ((fieldType == FIELD_TYPE_BATTERY) || (fieldType == FIELD_TYPE_BATTERY_HIDE_PERCENT)) {
-
-			if (Sys.getDeviceSettings().screenShape == Sys.SCREEN_SHAPE_ROUND) {
-				drawBatteryMeter(dc, x, mTop, 28, 14);
-			} else {
-				drawBatteryMeter(dc, x, mTop, 24, 12);
-			}
+			drawBatteryMeter(dc, x, mTop, mBatteryWidth, mBatteryWidth / 2);
 
 		// #34 Live HR in low power mode.
 		} else if (isLiveHeartRate && isPartialUpdate) {
@@ -281,28 +272,26 @@ class DataFields extends Ui.Drawable {
 				var weatherIconsSubset = result["weatherIcon"].substring(2, 3);
 				if (!weatherIconsSubset.equals(mWeatherIconsSubset)) {
 					mWeatherIconsSubset = weatherIconsSubset;
-					if (mWeatherIconsSubset.equals("d")) {
-						mWeatherIconsFont = Ui.loadResource(Rez.Fonts.WeatherIconsFontDay);
-					} else {
-						mWeatherIconsFont = Ui.loadResource(Rez.Fonts.WeatherIconsFontNight);
-					}
+					mWeatherIconsFont = Ui.loadResource((mWeatherIconsSubset.equals("d")) ?
+						Rez.Fonts.WeatherIconsFontDay : Rez.Fonts.WeatherIconsFontNight);
 				}
 				font = mWeatherIconsFont;
 
-				// Map weather icon code --> Unicode --> Char --> String.
+				// #89 To avoid Unicode issues on real 735xt, rewrite char IDs as regular ASCII values, day icons starting from
+				// "A", night icons starting from "a" ("I" is shared). Also makes subsetting easier in fonts.xml.
 				// See https://openweathermap.org/weather-conditions.
 				icon = {
-					// Day icon     Night icon         Description
-					"01d" => 61453, "01n" => 61486, // clear sky
-					"02d" => 61452, "02n" => 61569, // few clouds
-					"03d" => 61442, "03n" => 61574, // scattered clouds
-					"04d" => 61459, "04n" => 61459, // broken clouds: day and night use same icon
-					"09d" => 61449, "09n" => 61481, // shower rain
-					"10d" => 61448, "10n" => 61480, // rain
-					"11d" => 61445, "11n" => 61477, // thunderstorm
-					"13d" => 61450, "13n" => 61482, // snow
-					"50d" => 61441, "50n" => 61475, // mist
-				}[result["weatherIcon"]].toChar().toString();
+					// Day icon               Night icon                Description
+					"01d" => "H" /* 61453 */, "01n" => "f" /* 61486 */, // clear sky
+					"02d" => "G" /* 61452 */, "02n" => "g" /* 61569 */, // few clouds
+					"03d" => "B" /* 61442 */, "03n" => "h" /* 61574 */, // scattered clouds
+					"04d" => "I" /* 61459 */, "04n" => "I" /* 61459 */, // broken clouds: day and night use same icon
+					"09d" => "E" /* 61449 */, "09n" => "d" /* 61481 */, // shower rain
+					"10d" => "D" /* 61448 */, "10n" => "c" /* 61480 */, // rain
+					"11d" => "C" /* 61445 */, "11n" => "b" /* 61477 */, // thunderstorm
+					"13d" => "F" /* 61450 */, "13n" => "e" /* 61482 */, // snow
+					"50d" => "A" /* 61441 */, "50n" => "a" /* 61475 */, // mist
+				}[result["weatherIcon"]];
 
 			} else {
 				font = gIconsFont;
@@ -374,7 +363,8 @@ class DataFields extends Ui.Drawable {
 		var altitude;
 		var pressure = null; // May never be initialised if no support for pressure (CIQ 1.x devices).
 		var temperature;
-		var humidity;
+		var weather;
+		var weatherValue;
 		var sunTimes;
 		var unit;
 
@@ -493,7 +483,7 @@ class DataFields extends Ui.Drawable {
 
 			case FIELD_TYPE_SUNRISE_SUNSET:
 			
-				if (gLocationLat != -360.0) { // -360.0 is a special value, meaning "unitialised". Can't have null float property.
+				if (gLocationLat != null) {
 					var nextSunEvent = 0;
 					var now = Gregorian.info(Time.now(), Time.FORMAT_SHORT);
 
@@ -503,7 +493,7 @@ class DataFields extends Ui.Drawable {
 					//Sys.println(now);
 
 					// Get today's sunrise/sunset times in current time zone.
-					sunTimes = App.getApp().getView().getSunTimes(gLocationLat, gLocationLng, null, /* tomorrow */ false);
+					sunTimes = getSunTimes(gLocationLat, gLocationLng, null, /* tomorrow */ false);
 					//Sys.println(sunTimes);
 
 					// If sunrise/sunset happens today.
@@ -521,7 +511,7 @@ class DataFields extends Ui.Drawable {
 
 						// After sunset today: tomorrow's sunrise (if any) is next.
 						} else {
-							sunTimes = App.getApp().getView().getSunTimes(gLocationLat, gLocationLng, null, /* tomorrow */ true);
+							sunTimes = getSunTimes(gLocationLat, gLocationLng, null, /* tomorrow */ true);
 							nextSunEvent = sunTimes[0];
 							result["isSunriseNext"] = true;
 						}
@@ -540,7 +530,7 @@ class DataFields extends Ui.Drawable {
 					} else {
 						var hour = Math.floor(nextSunEvent).toLong() % 24;
 						var min = Math.floor((nextSunEvent - Math.floor(nextSunEvent)) * 60); // Math.floor(fractional_part * 60)
-						value = App.getApp().getView().getFormattedTime(hour, min);
+						value = App.getApp().getFormattedTime(hour, min);
 						value = value[:hour] + ":" + value[:min] + value[:amPm]; 
 					}
 
@@ -552,54 +542,44 @@ class DataFields extends Ui.Drawable {
 				break;
 
 			case FIELD_TYPE_WEATHER:
-
-				// Default = sunshine!
-				result["weatherIcon"] = "01d";
-
-				if (App has :Storage) {
-					var weather = App.Storage.getValue("OpenWeatherMapCurrent");
-
-					// Awaiting location.
-					if (gLocationLat == -360.0) { // -360.0 is a special value, meaning "unitialised". Can't have null float property.
-						value = "gps?";
-
-					// Stored weather data available.
-					} else if ((weather != null) && (weather["temp"] != null)) {
-						temperature = weather["temp"]; // Celcius.
-
-						if (settings.temperatureUnits == System.UNIT_STATUTE) {
-							temperature = (temperature * (9.0 / 5)) + 32; // Convert to Farenheit: ensure floating point division.
-						}
-
-						value = temperature.format(INTEGER_FORMAT) + "°";
-						result["weatherIcon"] = weather["icon"];
-
-					// Awaiting response.
-					} else if (App.Storage.getValue("PendingWebRequests")["OpenWeatherMapCurrent"]) {
-						value = "...";
-					}
-				}
-				break;
-
 			case FIELD_TYPE_HUMIDITY:
 
-				if (App has :Storage) {
-					var weather = App.Storage.getValue("OpenWeatherMapCurrent");
+				// Default = sunshine!
+				if (type == FIELD_TYPE_WEATHER) {
+					result["weatherIcon"] = "01d";
+				}
 
-					// Awaiting location.
-					if (gLocationLat == -360.0) { // -360.0 is a special value, meaning "unitialised". Can't have null float property.
-						value = "gps?";
+				weather = App.getApp().getProperty("OpenWeatherMapCurrent");
 
-					// Stored weather data available.
-					} else if ((weather != null) && (weather["humidity"] != null)) {
-						humidity = weather["humidity"];
+				// Awaiting location.
+				if (gLocationLat == null) {
+					value = "gps?";
 
-						value = humidity.format(INTEGER_FORMAT) + "%";
+				// Stored weather data available.
+				} else if (weather != null) {
 
-					// Awaiting response.
-					} else if (App.Storage.getValue("PendingWebRequests")["OpenWeatherMapCurrent"]) {
-						value = "...";
+					// FIELD_TYPE_WEATHER.
+					if (type == FIELD_TYPE_WEATHER) {
+						weatherValue = weather["temp"]; // Celcius.
+
+						if (settings.temperatureUnits == System.UNIT_STATUTE) {
+							weatherValue = (weatherValue * (9.0 / 5)) + 32; // Convert to Farenheit: ensure floating point division.
+						}
+
+						value = weatherValue.format(INTEGER_FORMAT) + "°";
+						result["weatherIcon"] = weather["icon"];
+
+					// FIELD_TYPE_HUMIDITY.
+					} else {
+						weatherValue = weather["humidity"];
+						value = weatherValue.format(INTEGER_FORMAT) + "%";
 					}
+
+				// Awaiting response.
+				} else if ((App.getApp().getProperty("PendingWebRequests") != null) &&
+					App.getApp().getProperty("PendingWebRequests")["OpenWeatherMapCurrent"]) {
+
+					value = "...";
 				}
 				break;
 
@@ -634,5 +614,118 @@ class DataFields extends Ui.Drawable {
 
 		result["value"] = value;
 		return result;
+	}
+
+	/**
+	* With thanks to ruiokada. Adapted, then translated to Monkey C, from:
+	* https://gist.github.com/ruiokada/b28076d4911820ddcbbc
+	*
+	* Calculates sunrise and sunset in local time given latitude, longitude, and tz.
+	*
+	* Equations taken from:
+	* https://en.wikipedia.org/wiki/Julian_day#Converting_Julian_or_Gregorian_calendar_date_to_Julian_Day_Number
+	* https://en.wikipedia.org/wiki/Sunrise_equation#Complete_calculation_on_Earth
+	*
+	* @method getSunTimes
+	* @param {Float} lat Latitude of location (South is negative)
+	* @param {Float} lng Longitude of location (West is negative)
+	* @param {Integer || null} tz Timezone hour offset. e.g. Pacific/Los Angeles is -8 (Specify null for system timezone)
+	* @param {Boolean} tomorrow Calculate tomorrow's sunrise and sunset, instead of today's.
+	* @return {Array} Returns array of length 2 with sunrise and sunset as floats.
+	*                 Returns array with [null, -1] if the sun never rises, and [-1, null] if the sun never sets.
+	*/
+	private function getSunTimes(lat, lng, tz, tomorrow) {
+
+		// Use double precision where possible, as floating point errors can affect result by minutes.
+		lat = lat.toDouble();
+		lng = lng.toDouble();
+
+		var now = Time.now();
+		if (tomorrow) {
+			now = now.add(new Time.Duration(24 * 60 * 60));
+		}
+		var d = Gregorian.info(Time.now(), Time.FORMAT_SHORT);
+		var rad = Math.PI / 180.0d;
+		var deg = 180.0d / Math.PI;
+		
+		// Calculate Julian date from Gregorian.
+		var a = Math.floor((14 - d.month) / 12);
+		var y = d.year + 4800 - a;
+		var m = d.month + (12 * a) - 3;
+		var jDate = d.day
+			+ Math.floor(((153 * m) + 2) / 5)
+			+ (365 * y)
+			+ Math.floor(y / 4)
+			- Math.floor(y / 100)
+			+ Math.floor(y / 400)
+			- 32045;
+
+		// Number of days since Jan 1st, 2000 12:00.
+		var n = jDate - 2451545.0d + 0.0008d;
+		//Sys.println("n " + n);
+
+		// Mean solar noon.
+		var jStar = n - (lng / 360.0d);
+		//Sys.println("jStar " + jStar);
+
+		// Solar mean anomaly.
+		var M = 357.5291d + (0.98560028d * jStar);
+		var MFloor = Math.floor(M);
+		var MFrac = M - MFloor;
+		M = MFloor.toLong() % 360;
+		M += MFrac;
+		//Sys.println("M " + M);
+
+		// Equation of the centre.
+		var C = 1.9148d * Math.sin(M * rad)
+			+ 0.02d * Math.sin(2 * M * rad)
+			+ 0.0003d * Math.sin(3 * M * rad);
+		//Sys.println("C " + C);
+
+		// Ecliptic longitude.
+		var lambda = (M + C + 180 + 102.9372d);
+		var lambdaFloor = Math.floor(lambda);
+		var lambdaFrac = lambda - lambdaFloor;
+		lambda = lambdaFloor.toLong() % 360;
+		lambda += lambdaFrac;
+		//Sys.println("lambda " + lambda);
+
+		// Solar transit.
+		var jTransit = 2451545.5d + jStar
+			+ 0.0053d * Math.sin(M * rad)
+			- 0.0069d * Math.sin(2 * lambda * rad);
+		//Sys.println("jTransit " + jTransit);
+
+		// Declination of the sun.
+		var delta = Math.asin(Math.sin(lambda * rad) * Math.sin(23.44d * rad));
+		//Sys.println("delta " + delta);
+
+		// Hour angle.
+		var cosOmega = (Math.sin(-0.83d * rad) - Math.sin(lat * rad) * Math.sin(delta))
+			/ (Math.cos(lat * rad) * Math.cos(delta));
+		//Sys.println("cosOmega " + cosOmega);
+
+		// Sun never rises.
+		if (cosOmega > 1) {
+			return [null, -1];
+		}
+		
+		// Sun never sets.
+		if (cosOmega < -1) {
+			return [-1, null];
+		}
+		
+		// Calculate times from omega.
+		var omega = Math.acos(cosOmega) * deg;
+		var jSet = jTransit + (omega / 360.0);
+		var jRise = jTransit - (omega / 360.0);
+		var deltaJSet = jSet - jDate;
+		var deltaJRise = jRise - jDate;
+
+		var tzOffset = (tz == null) ? (Sys.getClockTime().timeZoneOffset / 3600) : tz;
+		return [
+			/* localRise */ (deltaJRise * 24) + tzOffset,
+			/* localSet */ (deltaJSet * 24) + tzOffset
+		];
 	}
 }

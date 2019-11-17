@@ -6,6 +6,7 @@ using Toybox.Application as App;
 (:background)
 class BackgroundService extends Sys.ServiceDelegate {
 	
+	(:background_method)
 	function initialize() {
 		Sys.ServiceDelegate.initialize();
 	}
@@ -13,9 +14,10 @@ class BackgroundService extends Sys.ServiceDelegate {
 	// Read pending web requests, and call appropriate web request function.
 	// This function determines priority of web requests, if multiple are pending.
 	// Pending web request flag will be cleared only once the background data has been successfully received.
+	(:background_method)
 	function onTemporalEvent() {
 		//Sys.println("onTemporalEvent");
-		var pendingWebRequests = App.Storage.getValue("PendingWebRequests");
+		var pendingWebRequests = App.getApp().getProperty("PendingWebRequests");
 		if (pendingWebRequests != null) {
 
 			// 1. City local time.
@@ -33,9 +35,8 @@ class BackgroundService extends Sys.ServiceDelegate {
 				makeWebRequest(
 					"https://api.openweathermap.org/data/2.5/weather",
 					{
-						// Assume that any watch that can make web requests, also supports App.Storage.
-						"lat" => App.Storage.getValue("LastLocationLat"),
-						"lon" => App.Storage.getValue("LastLocationLng"),
+						"lat" => App.getApp().getProperty("LastLocationLat"),
+						"lon" => App.getApp().getProperty("LastLocationLng"),
 						"appid" => "d72271af214d870eb94fe8f9af450db4",
 						"units" => "metric" // Celcius.
 					},
@@ -74,6 +75,7 @@ class BackgroundService extends Sys.ServiceDelegate {
 		}
 	}
 	*/
+	(:background_method)
 	function onReceiveCityLocalTime(responseCode, data) {
 
 		// HTTP failure: return responseCode.
@@ -142,6 +144,7 @@ class BackgroundService extends Sys.ServiceDelegate {
 		"cod":200
 	}
 	*/
+	(:background_method)
 	function onReceiveOpenWeatherMapCurrent(responseCode, data) {
 		var result;
 		
@@ -171,6 +174,7 @@ class BackgroundService extends Sys.ServiceDelegate {
 		});
 	}
 
+	(:background_method)
 	function makeWebRequest(url, params, callback) {
 		var options = {
 			:method => Comms.HTTP_REQUEST_METHOD_GET,

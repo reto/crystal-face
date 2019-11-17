@@ -5,21 +5,24 @@ using Toybox.WatchUi as Ui;
 using Toybox.Time;
 
 // In-memory current location.
-// Important for CIQ 1.x watches that only support Object Store, where stored location is overwritten with default when user
-// changes any setting (this happens for any properties that do not have corresponding setting). Object Store is still useful for
-// when user moves away from watch face and returns to it.
-var gLocationLat = -360.0; // -360.0 is a special value, meaning "unitialised". Can't have null float property.
-var gLocationLng = -360.0; // -360.0 is a special value, meaning "unitialised". Can't have null float property.
+// Previously persisted in App.Storage, but now persisted in Object Store due to #86 workaround for App.Storage firmware bug.
+// Current location retrieved/saved in checkPendingWebRequests().
+// Persistence allows weather and sunrise/sunset features to be used after watch face restart, even if watch no longer has current
+// location available.
+var gLocationLat = null;
+var gLocationLng = null;
 
 (:background)
 class CrystalApp extends App.AppBase {
 
 	var mView;
+	var mFieldTypes = new [3];
 
 	function initialize() {
-		AppBase.initialize();		
+		AppBase.initialize();
 	}
 
+	/*
 	// onStart() is called on application start up
 	function onStart(state) {
 	}
@@ -27,10 +30,12 @@ class CrystalApp extends App.AppBase {
 	// onStop() is called when your application is exiting
 	function onStop(state) {
 	}
+	*/
 
 	// Return the initial view of your application here
 	function getInitialView() {
 		mView = new CrystalView();
+		onSettingsChanged(); // After creating view.
 		return [mView];
 	}
 
@@ -40,15 +45,26 @@ class CrystalApp extends App.AppBase {
 
 	// New app settings have been received so trigger a UI update
 	function onSettingsChanged() {
-		mView.onSettingsChanged();
-		checkPendingWebRequests();
+		mFieldTypes[0] = getProperty("Field1Type");
+		mFieldTypes[1] = getProperty("Field2Type");
+		mFieldTypes[2] = getProperty("Field3Type");
+
+		mView.onSettingsChanged(); // Calls checkPendingWebRequests().
+
 		Ui.requestUpdate();
+	}
+
+	function hasField(fieldType) {
+		return ((mFieldTypes[0] == fieldType) ||
+			(mFieldTypes[1] == fieldType) ||
+			(mFieldTypes[2] == fieldType));
 	}
 
 	// Determine if any web requests are needed.
 	// If so, set approrpiate pendingWebRequests flag for use by BackgroundService, then register for
 	// temporal event.
 	// Currently called on layout initialisation, when settings change, and on exiting sleep.
+	(:background_method)
 	function checkPendingWebRequests() {
 
 		// Attempt to update current location, to be used by Sunrise/Sunset, and Weather.
@@ -60,61 +76,41 @@ class CrystalApp extends App.AppBase {
 			gLocationLat = location[0].toFloat();
 			gLocationLng = location[1].toFloat();
 
-			// Use App.Storage if possible, as this is not overwritten with default property value (-360.0) when user changes any
-			// setting.
-			if (App has :Storage) {
-				App.Storage.setValue("LastLocationLat", gLocationLat);
-				App.Storage.setValue("LastLocationLng", gLocationLng);
-			} else {
-				App.getApp().setProperty("LastLocationLat", gLocationLat);
-				App.getApp().setProperty("LastLocationLng", gLocationLng);
+			setProperty("LastLocationLat", gLocationLat);
+			setProperty("LastLocationLng", gLocationLng);
+
+		// If current location is not available, read stored value from Object Store, being careful not to overwrite a valid
+		// in-memory value with an invalid stored one.
+		} else {
+			var lat = getProperty("LastLocationLat");
+			if (lat != null) {
+				gLocationLat = lat;
 			}
 
-		// If current location is not available, read stored value from Storage or Object Store, being careful not to overwrite
-		// a valid in-memory value with an invalid stored one.
-		} else {
-			var lat, lng;
-			if (App has :Storage) {
-				// Most likely null if location has not yet been saved to Storage: leave value at -360.0.
-				lat = App.Storage.getValue("LastLocationLat");
-				if (lat != null) {
-					gLocationLat = lat;
-				}
-				lng = App.Storage.getValue("LastLocationLng");
-				if (lng != null) {
-					gLocationLng = lng;
-				}
-			} else {
-				// Gets reset to -360.0 as soon as settings are changed, because this property has no corresponding setting.
-				lat = App.getApp().getProperty("LastLocationLat");
-				if (lat != -360.0) {
-					gLocationLat = lat;
-				}
-				lng = App.getApp().getProperty("LastLocationLng");
-				if (lng != -360) {
-					gLocationLng = lng;
-				}
+			var lng = getProperty("LastLocationLng");
+			if (lng != null) {
+				gLocationLng = lng;
 			}
 		}
 		// Sys.println(gLocationLat + ", " + gLocationLng);
 
-		if (!((Sys has :ServiceDelegate) && (App has :Storage))) {
+		if (!(Sys has :ServiceDelegate)) {
 			return;
 		}
 
-		var pendingWebRequests = App.Storage.getValue("PendingWebRequests");
+		var pendingWebRequests = getProperty("PendingWebRequests");
 		if (pendingWebRequests == null) {
 			pendingWebRequests = {};
 		}
 
 		// 1. City local time:
 		// City has been specified.
-		var city = App.getApp().getProperty("LocalTimeInCity");
+		var city = getProperty("LocalTimeInCity");
 		
 		// #78 Setting with value of empty string may cause corresponding property to be null.
 		if ((city != null) && (city.length() > 0)) {
 
-			var cityLocalTime = App.Storage.getValue("CityLocalTime");
+			var cityLocalTime = getProperty("CityLocalTime");
 
 			// No existing data.
 			if ((cityLocalTime == null) ||
@@ -129,16 +125,17 @@ class CrystalApp extends App.AppBase {
 			// city again.
 			} else if (!cityLocalTime["requestCity"].equals(city)) {
 
-				App.Storage.deleteValue("CityLocalTime");
+				deleteProperty("CityLocalTime");
 				pendingWebRequests["CityLocalTime"] = true;
 			}
 		}
 
 		// 2. Weather:
-		// Location must be available, weather data field must be shown.
-		if ((gLocationLat != -360.0) && mView.mDataFields.hasField(FIELD_TYPE_WEATHER)) {
+		// Location must be available, weather or humidity (#113) data field must be shown.
+		if ((gLocationLat != null) &&
+			(hasField(FIELD_TYPE_WEATHER) || hasField(FIELD_TYPE_HUMIDITY))) {
 
-			var owmCurrent = App.Storage.getValue("OpenWeatherMapCurrent");
+			var owmCurrent = getProperty("OpenWeatherMapCurrent");
 
 			// No existing data.
 			if (owmCurrent == null) {
@@ -176,26 +173,28 @@ class CrystalApp extends App.AppBase {
 			}
 		}
 
-		App.Storage.setValue("PendingWebRequests", pendingWebRequests);
+		setProperty("PendingWebRequests", pendingWebRequests);
 	}
 
+	(:background_method)
 	function getServiceDelegate() {
 		return [new BackgroundService()];
 	}
 
 	// Handle data received from BackgroundService.
 	// On success, clear appropriate pendingWebRequests flag.
-	// data is Dictionary with single key that indicates the data type received. This corresponds with App.Storage and
+	// data is Dictionary with single key that indicates the data type received. This corresponds with Object Store and
 	// pendingWebRequests keys.
+	(:background_method)
 	function onBackgroundData(data) {
-		var pendingWebRequests = App.Storage.getValue("PendingWebRequests");
+		var pendingWebRequests = getProperty("PendingWebRequests");
 		if (pendingWebRequests == null) {
 			//Sys.println("onBackgroundData() called with no pending web requests!");
 			pendingWebRequests = {};
 		}
 
 		var type = data.keys()[0]; // Type of received data.
-		var storedData = App.Storage.getValue(type);
+		var storedData = getProperty(type);
 		var receivedData = data[type]; // The actual data received: strip away type key.
 		
 		// No value in showing any HTTP error to the user, so no need to modify stored data.
@@ -207,9 +206,47 @@ class CrystalApp extends App.AppBase {
 		// New data received: clear pendingWebRequests flag and overwrite stored data.
 		storedData = receivedData;
 		pendingWebRequests.remove(type);
-		App.Storage.setValue("PendingWebRequests", pendingWebRequests);
-		App.Storage.setValue(type, storedData);
+		setProperty("PendingWebRequests", pendingWebRequests);
+		setProperty(type, storedData);
 
 		Ui.requestUpdate();
+	}
+
+	// Return a formatted time dictionary that respects is24Hour and HideHoursLeadingZero settings.
+	// - hour: 0-23.
+	// - min:  0-59.
+	function getFormattedTime(hour, min) {
+		var amPm = "";
+
+		if (!Sys.getDeviceSettings().is24Hour) {
+
+			// #6 Ensure noon is shown as PM.
+			var isPm = (hour >= 12);
+			if (isPm) {
+				
+				// But ensure noon is shown as 12, not 00.
+				if (hour > 12) {
+					hour = hour - 12;
+				}
+				amPm = "p";
+			} else {
+				
+				// #27 Ensure midnight is shown as 12, not 00.
+				if (hour == 0) {
+					hour = 12;
+				}
+				amPm = "a";
+			}
+		}
+
+		// #10 If in 12-hour mode with Hide Hours Leading Zero set, hide leading zero. Otherwise, show leading zero.
+		// #69 Setting now applies to both 12- and 24-hour modes.
+		hour = hour.format(getProperty("HideHoursLeadingZero") ? INTEGER_FORMAT : "%02d");
+
+		return {
+			:hour => hour,
+			:min => min.format("%02d"),
+			:amPm => amPm
+		};
 	}
 }

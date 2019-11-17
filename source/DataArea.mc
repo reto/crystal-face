@@ -41,11 +41,7 @@ class DataArea extends Ui.Drawable {
 
 		if (leftValues[:isValid]) {
 			mLeftGoalCurrent = leftValues[:current].format(INTEGER_FORMAT);
-			if (mLeftGoalType == GOAL_TYPE_BATTERY) {
-				mLeftGoalMax = "%";
-			} else {
-				mLeftGoalMax = leftValues[:max].format(INTEGER_FORMAT);
-			}
+			mLeftGoalMax = (mLeftGoalType == GOAL_TYPE_BATTERY) ? "%" : leftValues[:max].format(INTEGER_FORMAT);
 		} else {
 			mLeftGoalCurrent = null;
 			mLeftGoalMax = null;
@@ -56,11 +52,7 @@ class DataArea extends Ui.Drawable {
 
 		if (rightValues[:isValid]) {
 			mRightGoalCurrent = rightValues[:current].format(INTEGER_FORMAT);
-			if (mRightGoalType == GOAL_TYPE_BATTERY) {
-				mRightGoalMax = "%";
-			} else {
-				mRightGoalMax = rightValues[:max].format(INTEGER_FORMAT);
-			}
+			mRightGoalMax = (mRightGoalType == GOAL_TYPE_BATTERY) ? "%" : rightValues[:max].format(INTEGER_FORMAT);
 		} else {
 			mRightGoalCurrent = null;
 			mRightGoalMax = null;
@@ -73,11 +65,10 @@ class DataArea extends Ui.Drawable {
 
 		var city = App.getApp().getProperty("LocalTimeInCity");
 
-		// Check for has :Storage, in case we're loading settings in the simulator from a different device.
 		// #78 Setting with value of empty string may cause corresponding property to be null.
-		if ((city != null) && (city.length() != 0) && (App has :Storage)) {
+		if ((city != null) && (city.length() != 0)) {
 			//drawTimeZone();
-			var cityLocalTime = App.Storage.getValue("CityLocalTime");
+			var cityLocalTime = App.getApp().getProperty("CityLocalTime");
 
 			// If available, use city returned from web request; otherwise, use raw city from settings.
 			// N.B. error response will NOT contain city.
@@ -123,7 +114,7 @@ class DataArea extends Ui.Drawable {
 					// (Local time) - (Local GMT offset) + (Time zone GMT offset)
 					time = Time.now().subtract(localGmtOffset).add(timeZoneGmtOffset);
 					time = Gregorian.info(time, Time.FORMAT_SHORT);
-					time = App.getApp().getView().getFormattedTime(time.hour, time.min);
+					time = App.getApp().getFormattedTime(time.hour, time.min);
 					time = time[:hour] + ":" + time[:min] + time[:amPm]; 
 				}
 
@@ -148,6 +139,10 @@ class DataArea extends Ui.Drawable {
 	}
 
 	function drawGoalIcon(dc, x, type, isValid, align) {
+		if (type == GOAL_TYPE_OFF) {
+			return;
+		}
+		
 		var icon = {
 			GOAL_TYPE_BATTERY => "9",
 			GOAL_TYPE_CALORIES => "6",
@@ -156,14 +151,7 @@ class DataArea extends Ui.Drawable {
 			GOAL_TYPE_ACTIVE_MINUTES => "2",
 		}[type];
 
-		var colour;
-		if (isValid) {
-			colour = gThemeColour;
-		} else {
-			colour = gMeterBackgroundColour;
-		}
-
-		dc.setColor(colour, Gfx.COLOR_TRANSPARENT);
+		dc.setColor(isValid ? gThemeColour : gMeterBackgroundColour, Gfx.COLOR_TRANSPARENT);
 		dc.drawText(
 			x,
 			mGoalIconY,
@@ -174,26 +162,35 @@ class DataArea extends Ui.Drawable {
 	}
 
 	function drawGoalValues(dc, x, currentValue, maxValue, align) {
-		if (currentValue != null) {
-			dc.setColor(gMonoLightColour, Gfx.COLOR_TRANSPARENT);
-			dc.drawText(
-				x,
-				mRow1Y,
-				gNormalFont,
-				currentValue,
-				align | Graphics.TEXT_JUSTIFY_VCENTER
-			);
-		}
+		var digitStyle = App.getApp().getProperty("GoalMeterDigitsStyle");
 
-		if (maxValue != null) {
-			dc.setColor(gMonoDarkColour, Gfx.COLOR_TRANSPARENT);
-			dc.drawText(
-				x,
-				mRow2Y,
-				gNormalFont,
-				maxValue,
-				align | Graphics.TEXT_JUSTIFY_VCENTER
-			);
+		// #107 Only draw values if digit style is not Hidden.
+		if (digitStyle != 2 /* HIDDEN */) {
+			if (currentValue != null) {
+				dc.setColor(gMonoLightColour, Gfx.COLOR_TRANSPARENT);
+				dc.drawText(
+					x,
+
+					// #107 Draw current value vertically centred if digit style is Current (i.e. not drawing max/target).
+					(digitStyle == 1 /* CURRENT */) ? ((mRow1Y + mRow2Y) / 2) : mRow1Y,
+
+					gNormalFont,
+					currentValue,
+					align | Graphics.TEXT_JUSTIFY_VCENTER
+				);
+			}
+
+			// #107 Only draw max/target goal value if digit style is set to Current/Target.
+			if ((maxValue != null) && (digitStyle == 0) /* CURRENT_TARGET */) {
+				dc.setColor(gMonoDarkColour, Gfx.COLOR_TRANSPARENT);
+				dc.drawText(
+					x,
+					mRow2Y,
+					gNormalFont,
+					maxValue,
+					align | Graphics.TEXT_JUSTIFY_VCENTER
+				);
+			}
 		}
 	}
 }

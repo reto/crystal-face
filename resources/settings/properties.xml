@@ -1,6 +1,6 @@
 <properties>
 
-	<property id="AppVersion" type="string">2.3.0</property>
+	<property id="AppVersion" type="string">2.4.0</property>
 
 	<property id="Theme" type="number">0</property>
 
@@ -10,6 +10,7 @@
 	<property id="LeftGoalType" type="number">0</property>
 	<property id="RightGoalType" type="number">1</property>
 	<property id="GoalMeterStyle" type="number">0</property>
+	<property id="GoalMeterDigitsStyle" type="number">0</property>
 	<property id="CaloriesGoal" type="number">2000</property>
 
 	<property id="FieldCount" type="number">3</property>
@@ -28,9 +29,5 @@
 	
 	<property id="HideSeconds" type="boolean">false</property>
 	<property id="HideHoursLeadingZero" type="boolean">true</property>
-
-	<!-- -360.0 is a special value, meaning "unitialised". Can't have null float property. -->
-	<property id="LastLocationLat" type="float">-360.0</property>
-	<property id="LastLocationLng" type="float">-360.0</property>
 
 </properties>

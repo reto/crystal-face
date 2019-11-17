@@ -4,9 +4,6 @@ using Toybox.System as Sys;
 using Toybox.Application as App;
 using Toybox.ActivityMonitor as ActivityMonitor;
 
-using Toybox.Time;
-using Toybox.Time.Gregorian;
-
 using Toybox.Math;
 
 const INTEGER_FORMAT = "%d";
@@ -22,28 +19,29 @@ var gMinutesColour;
 var gNormalFont;
 var gIconsFont;
 
-const BATTERY_LINE_WIDTH = 2;
-const BATTERY_HEAD_HEIGHT = 4;
-const BATTERY_MARGIN = 1;
+const SCREEN_MULTIPLIER = (Sys.getDeviceSettings().screenWidth < 390) ? 1 : 2;
+//const BATTERY_LINE_WIDTH = 2;
+const BATTERY_HEAD_HEIGHT = 4 * SCREEN_MULTIPLIER;
+const BATTERY_MARGIN = SCREEN_MULTIPLIER;
 
-const BATTERY_LEVEL_LOW = 20;
-const BATTERY_LEVEL_CRITICAL = 10;
+//const BATTERY_LEVEL_LOW = 20;
+//const BATTERY_LEVEL_CRITICAL = 10;
 
 // x, y are co-ordinates of centre point.
 // width and height are outer dimensions of battery "body".
 function drawBatteryMeter(dc, x, y, width, height) {
 	dc.setColor(gThemeColour, Graphics.COLOR_TRANSPARENT);
-	dc.setPenWidth(BATTERY_LINE_WIDTH);
+	dc.setPenWidth(/* BATTERY_LINE_WIDTH */ 2);
 
 	// Body.
 	// drawRoundedRectangle's x and y are top-left corner of middle of stroke.
 	// Bottom-right corner of middle of stroke will be (x + width - 1, y + height - 1).
 	dc.drawRoundedRectangle(
-		x - (width / 2) + (BATTERY_LINE_WIDTH / 2),
-		y - (height / 2) + (BATTERY_LINE_WIDTH / 2),
-		width - BATTERY_LINE_WIDTH + 1,
-		height - BATTERY_LINE_WIDTH + 1,
-		/* BATTERY_CORNER_RADIUS */ 2);
+		x - (width / 2) + /* (BATTERY_LINE_WIDTH / 2) */ 1,
+		y - (height / 2) + /* (BATTERY_LINE_WIDTH / 2) */ 1,
+		width - /* BATTERY_LINE_WIDTH + 1 */ 1,
+		height - /* BATTERY_LINE_WIDTH + 1 */ 1,
+		/* BATTERY_CORNER_RADIUS */ 2 * SCREEN_MULTIPLIER);
 
 	// Head.
 	// fillRectangle() works as expected.
@@ -59,9 +57,9 @@ function drawBatteryMeter(dc, x, y, width, height) {
 
 	// Fill colour based on battery level.
 	var fillColour;
-	if (batteryLevel <= BATTERY_LEVEL_CRITICAL) {
+	if (batteryLevel <= /* BATTERY_LEVEL_CRITICAL */ 10) {
 		fillColour = Graphics.COLOR_RED;
-	} else if (batteryLevel <= BATTERY_LEVEL_LOW) {
+	} else if (batteryLevel <= /* BATTERY_LEVEL_LOW */ 20) {
 		fillColour = Graphics.COLOR_YELLOW;
 	} else {
 		fillColour = gThemeColour;
@@ -69,17 +67,20 @@ function drawBatteryMeter(dc, x, y, width, height) {
 
 	dc.setColor(fillColour, Graphics.COLOR_TRANSPARENT);
 
-	var fillWidth = width - (2 * (BATTERY_LINE_WIDTH + BATTERY_MARGIN));
+	var lineWidthPlusMargin = (/* BATTERY_LINE_WIDTH */ 2 + BATTERY_MARGIN);
+	var fillWidth = width - (2 * lineWidthPlusMargin);
 	dc.fillRectangle(
-		x - (width / 2) + BATTERY_LINE_WIDTH + BATTERY_MARGIN,
-		y - (height / 2) + BATTERY_LINE_WIDTH + BATTERY_MARGIN,
+		x - (width / 2) + lineWidthPlusMargin,
+		y - (height / 2) + lineWidthPlusMargin,
 		Math.ceil(fillWidth * (batteryLevel / 100)), 
-		height - (2 * (BATTERY_LINE_WIDTH + BATTERY_MARGIN)));
+		height - (2 * lineWidthPlusMargin));
 }
 
 class CrystalView extends Ui.WatchFace {
 	private var mIsSleeping = false;
-	private var mSettingsChangedSinceLastDraw = false; // Have settings changed since last full update?
+	private var mIsBurnInProtection = false; // Is burn-in protection required and active?
+	private var mBurnInProtectionChangedSinceLastDraw = false; // Did burn-in protection change since last full update?
+	private var mSettingsChangedSinceLastDraw = true; // Have settings changed since last full update?
 
 	private var mTime;
 	var mDataFields;
@@ -116,11 +117,6 @@ class CrystalView extends Ui.WatchFace {
 
 	function initialize() {
 		WatchFace.initialize();
-
-		updateThemeColours();
-		updateHoursMinutesColours();
-
-		//Sys.println(getSunTimes(51.748124, -0.461689, null));
 	}
 
 	// Load your resources here
@@ -128,48 +124,37 @@ class CrystalView extends Ui.WatchFace {
 		gIconsFont = Ui.loadResource(Rez.Fonts.IconsFont);
 
 		setLayout(Rez.Layouts.WatchFace(dc));
-
 		cacheDrawables();
-
-		// Cache reference to ThickThinTime, for use in low power mode. Saves nearly 5ms!
-		// Slighly faster than mDrawables lookup.
-		mTime = View.findDrawableById("Time");
-
-		mDataFields = View.findDrawableById("DataFields");
-		App.getApp().checkPendingWebRequests(); // Depends on mDataFields.hasField().
-
-		setHideSeconds(App.getApp().getProperty("HideSeconds"));
-
-		updateNormalFont(); // Requires mDrawables, mDataFields.
 	}
 
 	function cacheDrawables() {
 		mDrawables[:LeftGoalMeter] = View.findDrawableById("LeftGoalMeter");
-		mDrawables[:LeftGoalIcon] = View.findDrawableById("LeftGoalIcon");
-
 		mDrawables[:RightGoalMeter] = View.findDrawableById("RightGoalMeter");
-		mDrawables[:RightGoalIcon] = View.findDrawableById("RightGoalIcon");
-
 		mDrawables[:DataArea] = View.findDrawableById("DataArea");
-
-		mDrawables[:Date] = View.findDrawableById("Date");
-
 		mDrawables[:Indicators] = View.findDrawableById("Indicators");
 
 		// Use mTime instead.
+		// Cache reference to ThickThinTime, for use in low power mode. Saves nearly 5ms!
+		// Slighly faster than mDrawables lookup.
 		//mDrawables[:Time] = View.findDrawableById("Time");
+		mTime = View.findDrawableById("Time");
 
 		// Use mDataFields instead.
 		//mDrawables[:DataFields] = View.findDrawableById("DataFields");
+		mDataFields = View.findDrawableById("DataFields");
 
 		mDrawables[:MoveBar] = View.findDrawableById("MoveBar");
+
+		setHideSeconds(App.getApp().getProperty("HideSeconds")); // Requires mTime, mDrawables[:MoveBar];
 	}
 
+	/*
 	// Called when this View is brought to the foreground. Restore
 	// the state of this View and prepare it to be shown. This includes
 	// loading resources into memory.
 	function onShow() {
 	}
+	*/
 
 	// Set flag to respond to settings change on next full draw (onUpdate()), as we may be in 1Hz (lower power) mode, and cannot
 	// update the full screen immediately. This is true on real hardware, but not in the simulator, which calls onUpdate()
@@ -184,6 +169,10 @@ class CrystalView extends Ui.WatchFace {
 
 		// Update hours/minutes colours after theme colours have been set.
 		updateHoursMinutesColours();
+
+		if (CrystalApp has :checkPendingWebRequests) { // checkPendingWebRequests() can be excluded to save memory.
+			App.getApp().checkPendingWebRequests();
+		}
 	}
 
 	// Select normal font, based on whether time zone feature is being used.
@@ -194,11 +183,8 @@ class CrystalView extends Ui.WatchFace {
 		var city = App.getApp().getProperty("LocalTimeInCity");
 
 		// #78 Setting with value of empty string may cause corresponding property to be null.
-		if ((city != null) && (city.length() > 0)) {
-			gNormalFont = Ui.loadResource(Rez.Fonts.NormalFontCities);
-		} else {
-			gNormalFont = Ui.loadResource(Rez.Fonts.NormalFont);
-		}
+		gNormalFont = Ui.loadResource(((city != null) && (city.length() > 0)) ?
+			Rez.Fonts.NormalFontCities : Rez.Fonts.NormalFont);
 	}
 
 	function updateThemeColours() {
@@ -241,17 +227,21 @@ class CrystalView extends Ui.WatchFace {
 			true,  // THEME_DAYGLO_ORANGE_LIGHT
 			false, // THEME_CORN_YELLOW_DARK
 		];
+
+		// #124: fr45 cannot show grey.
+		var isFr45 = (Sys.getDeviceSettings().screenWidth == 208);
+
 		if (lightFlags[theme]) {
 			gMonoLightColour = Graphics.COLOR_BLACK;
-			gMonoDarkColour = Graphics.COLOR_DK_GRAY;
+			gMonoDarkColour = isFr45 ? Graphics.COLOR_BLACK : Graphics.COLOR_DK_GRAY;			
 			
-			gMeterBackgroundColour = Graphics.COLOR_LT_GRAY;
+			gMeterBackgroundColour = isFr45 ? Graphics.COLOR_BLACK : Graphics.COLOR_LT_GRAY;
 			gBackgroundColour = Graphics.COLOR_WHITE;
 		} else {
 			gMonoLightColour = Graphics.COLOR_WHITE;
-			gMonoDarkColour = Graphics.COLOR_LT_GRAY;
+			gMonoDarkColour = isFr45 ? Graphics.COLOR_WHITE : Graphics.COLOR_LT_GRAY;
 
-			gMeterBackgroundColour = Graphics.COLOR_DK_GRAY;
+			gMeterBackgroundColour = isFr45 ? Graphics.COLOR_WHITE : Graphics.COLOR_DK_GRAY;
 			gBackgroundColour = Graphics.COLOR_BLACK;
 		}
 	}
@@ -268,16 +258,18 @@ class CrystalView extends Ui.WatchFace {
 	}
 
 	function onSettingsChangedSinceLastDraw() {
+		if (!mIsBurnInProtection) {
 
-		// Recreate background buffers for each meter, in case theme colour has changed.
-		mDrawables[:LeftGoalMeter].onSettingsChanged();
-		mDrawables[:RightGoalMeter].onSettingsChanged();
+			// Recreate background buffers for each meter, in case theme colour has changed.	
+			mDrawables[:LeftGoalMeter].onSettingsChanged();	
+			mDrawables[:RightGoalMeter].onSettingsChanged();	
 
-		mDrawables[:MoveBar].onSettingsChanged();
+			mDrawables[:MoveBar].onSettingsChanged();	
 
-		mDataFields.onSettingsChanged();
+			mDataFields.onSettingsChanged();	
 
-		mDrawables[:Indicators].onSettingsChanged();
+			mDrawables[:Indicators].onSettingsChanged();
+		}
 
 		// If watch does not support per-second updates, and watch is sleeping, do not show seconds immediately, as they will not 
 		// update. Instead, wait for next onExitSleep(). 
@@ -290,7 +282,17 @@ class CrystalView extends Ui.WatchFace {
 
 	// Update the view
 	function onUpdate(dc) {
-		//System.println("onUpdate()");
+		//Sys.println("onUpdate()");
+
+		// If burn-in protection has changed, set layout appropriate to new burn-in protection state.
+		// If turning on burn-in protection, free memory for regular watch face drawables by clearing references. This means that
+		// any use of mDrawables cache must only occur when burn in protection is NOT active.
+		// If turning off burn-in protection, recache regular watch face drawables.
+		if (mBurnInProtectionChangedSinceLastDraw) {
+			mBurnInProtectionChangedSinceLastDraw = false;
+			setLayout(mIsBurnInProtection ? Rez.Layouts.AlwaysOn(dc) : Rez.Layouts.WatchFace(dc));
+			cacheDrawables();
+		}
 
 		// Respond now to any settings change since last full draw, as we can now update the full screen.
 		if (mSettingsChangedSinceLastDraw) {
@@ -310,13 +312,17 @@ class CrystalView extends Ui.WatchFace {
 
 	// Update each goal meter separately, then also pass types and values to data area to draw goal icons.
 	function updateGoalMeters() {
+		if (mIsBurnInProtection) {
+			return;
+		}
+
 		var leftType = App.getApp().getProperty("LeftGoalType");
 		var leftValues = getValuesForGoalType(leftType);
-		mDrawables[:LeftGoalMeter].setValues(leftValues[:current], leftValues[:max]);
+		mDrawables[:LeftGoalMeter].setValues(leftValues[:current], leftValues[:max], /* isOff */ leftType == GOAL_TYPE_OFF);
 
 		var rightType = App.getApp().getProperty("RightGoalType");
 		var rightValues = getValuesForGoalType(rightType);
-		mDrawables[:RightGoalMeter].setValues(rightValues[:current], rightValues[:max]);
+		mDrawables[:RightGoalMeter].setValues(rightValues[:current], rightValues[:max], /* isOff */ rightType == GOAL_TYPE_OFF);
 
 		mDrawables[:DataArea].setGoalValues(leftType, leftValues, rightType, rightValues);
 	}
@@ -329,6 +335,7 @@ class CrystalView extends Ui.WatchFace {
 		};
 
 		var info = ActivityMonitor.getInfo();
+		var caloriesGoal;
 
 		switch(type) {
 			case GOAL_TYPE_STEPS:
@@ -363,7 +370,15 @@ class CrystalView extends Ui.WatchFace {
 
 			case GOAL_TYPE_CALORIES:
 				values[:current] = info.calories;
-				values[:max] = App.getApp().getProperty("CaloriesGoal");
+
+				// #123 Protect against null value returned by getProperty(). Trigger invalid goal handling code below.
+				// Protect against unexpected type e.g. String.
+				caloriesGoal = App.getApp().getProperty("CaloriesGoal");
+				values[:max] = (caloriesGoal == null) ? 0 : caloriesGoal.toNumber();
+				break;
+
+			case GOAL_TYPE_OFF:
+				values[:isValid] = false;
 				break;
 		}
 
@@ -386,11 +401,13 @@ class CrystalView extends Ui.WatchFace {
 		mTime.drawSeconds(dc, /* isPartialUpdate */ true);
 	}
 
+	/*
 	// Called when this View is removed from the screen. Save the
 	// state of this View here. This includes freeing resources from
 	// memory.
 	function onHide() {
 	}
+	*/
 
 	// The user has just looked at their watch. Timers and animations may be started here.
 	function onExitSleep() {
@@ -406,7 +423,16 @@ class CrystalView extends Ui.WatchFace {
 
 		// Rather than checking the need for background requests on a timer, or on the hour, easier just to check when exiting
 		// sleep.
-		App.getApp().checkPendingWebRequests();
+		if (CrystalApp has :checkPendingWebRequests) { // checkPendingWebRequests() can be excluded to save memory.
+			App.getApp().checkPendingWebRequests();
+		}
+
+		// If watch requires burn-in protection, set flag to false when entering sleep.
+		var settings = Sys.getDeviceSettings();
+		if (settings has :requiresBurnInProtection && settings.requiresBurnInProtection) {
+			mIsBurnInProtection = false;
+			mBurnInProtectionChangedSinceLastDraw = true;
+		}
 	}
 
 	// Terminate any active timers and prepare for slow updates.
@@ -422,6 +448,15 @@ class CrystalView extends Ui.WatchFace {
 		if (!PER_SECOND_UPDATES_SUPPORTED && !App.getApp().getProperty("HideSeconds")) {
 			setHideSeconds(true);
 		}
+
+		// If watch requires burn-in protection, set flag to true when entering sleep.
+		var settings = Sys.getDeviceSettings();
+		if (settings has :requiresBurnInProtection && settings.requiresBurnInProtection) {
+			mIsBurnInProtection = true;
+			mBurnInProtectionChangedSinceLastDraw = true;
+		}
+
+		Ui.requestUpdate();
 	}
 
 	function isSleeping() {
@@ -429,169 +464,11 @@ class CrystalView extends Ui.WatchFace {
 	}
 
 	function setHideSeconds(hideSeconds) {
+		if (mIsBurnInProtection) {
+			return;
+		}
+
 		mTime.setHideSeconds(hideSeconds);
 		mDrawables[:MoveBar].setFullWidth(hideSeconds);
-	}
-
-	/**
-	* With thanks to ruiokada. Adapted, then translated to Monkey C, from:
-	* https://gist.github.com/ruiokada/b28076d4911820ddcbbc
-	*
-	* Calculates sunrise and sunset in local time given latitude, longitude, and tz.
-	*
-	* Equations taken from:
-	* https://en.wikipedia.org/wiki/Julian_day#Converting_Julian_or_Gregorian_calendar_date_to_Julian_Day_Number
-	* https://en.wikipedia.org/wiki/Sunrise_equation#Complete_calculation_on_Earth
-	*
-	* @method getSunTimes
-	* @param {Float} lat Latitude of location (South is negative)
-	* @param {Float} lng Longitude of location (West is negative)
-	* @param {Integer || null} tz Timezone hour offset. e.g. Pacific/Los Angeles is -8 (Specify null for system timezone)
-	* @param {Boolean} tomorrow Calculate tomorrow's sunrise and sunset, instead of today's.
-	* @return {Array} Returns array of length 2 with sunrise and sunset as floats.
-	*                 Returns array with [null, -1] if the sun never rises, and [-1, null] if the sun never sets.
-	*/
-	function getSunTimes(lat, lng, tz, tomorrow) {
-
-		// Use double precision where possible, as floating point errors can affect result by minutes.
-		lat = lat.toDouble();
-		lng = lng.toDouble();
-
-		var now = Time.now();
-		if (tomorrow) {
-			now = now.add(new Time.Duration(24 * 60 * 60));
-		}
-		var d = Gregorian.info(Time.now(), Time.FORMAT_SHORT);
-		var rad = Math.PI / 180.0d;
-		var deg = 180.0d / Math.PI;
-		
-		// Calculate Julian date from Gregorian.
-		var a = Math.floor((14 - d.month) / 12);
-		var y = d.year + 4800 - a;
-		var m = d.month + (12 * a) - 3;
-		var jDate = d.day
-			+ Math.floor(((153 * m) + 2) / 5)
-			+ (365 * y)
-			+ Math.floor(y / 4)
-			- Math.floor(y / 100)
-			+ Math.floor(y / 400)
-			- 32045;
-
-		// Number of days since Jan 1st, 2000 12:00.
-		var n = jDate - 2451545.0d + 0.0008d;
-		//Sys.println("n " + n);
-
-		// Mean solar noon.
-		var jStar = n - (lng / 360.0d);
-		//Sys.println("jStar " + jStar);
-
-		// Solar mean anomaly.
-		var M = 357.5291d + (0.98560028d * jStar);
-		var MFloor = Math.floor(M);
-		var MFrac = M - MFloor;
-		M = MFloor.toLong() % 360;
-		M = M + MFrac;
-		//Sys.println("M " + M);
-
-		// Equation of the centre.
-		var C = 1.9148d * Math.sin(M * rad)
-			+ 0.02d * Math.sin(2 * M * rad)
-			+ 0.0003d * Math.sin(3 * M * rad);
-		//Sys.println("C " + C);
-
-		// Ecliptic longitude.
-		var lambda = (M + C + 180 + 102.9372d);
-		var lambdaFloor = Math.floor(lambda);
-		var lambdaFrac = lambda - lambdaFloor;
-		lambda = lambdaFloor.toLong() % 360;
-		lambda = lambda + lambdaFrac;
-		//Sys.println("lambda " + lambda);
-
-		// Solar transit.
-		var jTransit = 2451545.5d + jStar
-			+ 0.0053d * Math.sin(M * rad)
-			- 0.0069d * Math.sin(2 * lambda * rad);
-		//Sys.println("jTransit " + jTransit);
-
-		// Declination of the sun.
-		var delta = Math.asin(Math.sin(lambda * rad) * Math.sin(23.44d * rad));
-		//Sys.println("delta " + delta);
-
-		// Hour angle.
-		var cosOmega = (Math.sin(-0.83d * rad) - Math.sin(lat * rad) * Math.sin(delta))
-			/ (Math.cos(lat * rad) * Math.cos(delta));
-		//Sys.println("cosOmega " + cosOmega);
-
-		// Sun never rises.
-		if (cosOmega > 1) {
-			return [null, -1];
-		}
-		
-		// Sun never sets.
-		if (cosOmega < -1) {
-			return [-1, null];
-		}
-		
-		// Calculate times from omega.
-		var omega = Math.acos(cosOmega) * deg;
-		var jSet = jTransit + (omega / 360.0);
-		var jRise = jTransit - (omega / 360.0);
-		var deltaJSet = jSet - jDate;
-		var deltaJRise = jRise - jDate;
-
-		var tzOffset;
-		if (tz == null) {
-			tzOffset = (Sys.getClockTime().timeZoneOffset / 3600);
-		} else {
-			tzOffset = tz;
-		}
-		
-		var localRise = (deltaJRise * 24) + tzOffset;
-		var localSet = (deltaJSet * 24) + tzOffset;
-		return [localRise, localSet];
-	}
-
-	// Return a formatted time dictionary that respects is24Hour and HideHoursLeadingZero settings.
-	// - hour: 0-23.
-	// - min:  0-59.
-	function getFormattedTime(hour, min) {
-		var amPm = "";
-
-		if (!Sys.getDeviceSettings().is24Hour) {
-
-			// #6 Ensure noon is shown as PM.
-			var isPm = (hour >= 12);
-			if (isPm) {
-				
-				// But ensure noon is shown as 12, not 00.
-				if (hour > 12) {
-					hour = hour - 12;
-				}
-				amPm = "p";
-			} else {
-				
-				// #27 Ensure midnight is shown as 12, not 00.
-				if (hour == 0) {
-					hour = 12;
-				}
-				amPm = "a";
-			}
-		}
-
-		// #10 If in 12-hour mode with Hide Hours Leading Zero set, hide leading zero.
-		// #69 Setting now applies to both 12- and 24-hour modes.
-		if (App.getApp().getProperty("HideHoursLeadingZero")) {
-			hour = hour.format(INTEGER_FORMAT);
-
-		// Otherwise, show leading zero.
-		} else {
-			hour = hour.format("%02d");
-		}
-
-		return {
-			:hour => hour,
-			:min => min.format("%02d"),
-			:amPm => amPm
-		};
 	}
 }
